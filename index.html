@@ -141,7 +141,6 @@
 <h1>Bitmap Alphabet Viewer</h1>
 
 <div class="controls">
-  <!-- Modalità -->
   <div class="mode-tabs">
     <button class="mode-tab active" id="tabSingle" onclick="setMode('single')">Singolo</button>
     <button class="mode-tab" id="tabAll" onclick="setMode('all')">Tutti</button>
@@ -149,29 +148,23 @@
 
   <div class="separator"></div>
 
-  <!-- Carattere singolo -->
   <label id="singleCharLabel">Carattere
     <input type="text" id="singleChar" value="A" maxlength="1" title="Scrivi un carattere o cifra" />
   </label>
 
   <div class="separator"></div>
 
-  <!-- Dimensioni cella -->
   <label>Cella W
-    <input type="number" id="cellW" value="12" min="4" max="64" />
+    <input type="number" id="cellW" value="12" min="4" max="128" />
   </label>
   <label>Cella H
-    <input type="number" id="cellH" value="16" min="4" max="64" />
+    <input type="number" id="cellH" value="16" min="4" max="128" />
   </label>
 
   <div class="separator"></div>
 
   <label>Font file
     <input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2" />
-  </label>
-
-  <label>Font size
-    <input type="number" id="fontSize" value="15" min="6" max="48" />
   </label>
 
   <label>Offset X
@@ -187,7 +180,7 @@
   </label>
 
   <label>Scala <span id="scaleVal">20</span>x
-    <input type="range" id="scaleSlider" min="5" max="60" value="20" step="1" />
+    <input type="range" id="scaleSlider" min="1" max="60" value="20" step="1" />
   </label>
 
   <button id="renderBtn">Render</button>
@@ -200,11 +193,10 @@
 <script>
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-let currentMode = "single"; // "single" | "all"
+let currentMode = "single";
 
 const glyphsEl       = document.getElementById("glyphs");
 const fontFileInput  = document.getElementById("fontFile");
-const fontSizeInput  = document.getElementById("fontSize");
 const offsetXInput   = document.getElementById("offsetX");
 const offsetYInput   = document.getElementById("offsetY");
 const thresholdInput = document.getElementById("threshold");
@@ -228,9 +220,7 @@ scaleSlider.addEventListener("input", () => {
 });
 
 function updateNote() {
-  const cw = getCellW();
-  const ch = getCellH();
-  noteEl.textContent = `Cella logica ${cw}×${ch} px — scala ${SCALE}x — griglia pixel visibile.`;
+  noteEl.textContent = `Cella logica ${getCellW()}×${getCellH()} px — scala ${SCALE}x — griglia pixel visibile.`;
 }
 
 cellWInput.addEventListener("input", updateNote);
@@ -240,8 +230,9 @@ function setMode(mode) {
   currentMode = mode;
   document.getElementById("tabSingle").classList.toggle("active", mode === "single");
   document.getElementById("tabAll").classList.toggle("active", mode === "all");
-  document.getElementById("singleCharLabel").style.opacity = mode === "single" ? "1" : "0.4";
-  document.getElementById("singleCharLabel").style.pointerEvents = mode === "single" ? "" : "none";
+  const lbl = document.getElementById("singleCharLabel");
+  lbl.style.opacity = mode === "single" ? "1" : "0.4";
+  lbl.style.pointerEvents = mode === "single" ? "" : "none";
 }
 
 let currentFontFamily = "monospace";
@@ -251,9 +242,7 @@ async function loadFontFromFile(file) {
   if (!file) return;
   const fontName = "UserBitmapFont_" + Date.now();
   const url = URL.createObjectURL(file);
-  if (currentFontFace) {
-    try { document.fonts.delete(currentFontFace); } catch(e) {}
-  }
+  if (currentFontFace) { try { document.fonts.delete(currentFontFace); } catch(e) {} }
   const ff = new FontFace(fontName, `url(${url})`);
   await ff.load();
   document.fonts.add(ff);
@@ -261,36 +250,53 @@ async function loadFontFromFile(file) {
   currentFontFamily = fontName;
 }
 
-function glyphToBitmap(char, fontSize, threshold) {
+/**
+ * Esegue il render del glifo ad alta risoluzione, misura il bounding box
+ * dell'inchiostro e lo ridimensiona per occupare l'intera cella (con aspect
+ * ratio preservato). Il font size iniziale viene scalato proporzionalmente
+ * alle dimensioni della cella, quindi il glifo viene fittato via bbox.
+ */
+function glyphToBitmap(char, threshold) {
   const CELL_W = getCellW();
   const CELL_H = getCellH();
-  const TMP_SCALE = 16;
-  const TW = CELL_W * TMP_SCALE + 20;
-  const TH = CELL_H * TMP_SCALE + 20;
 
-  const tmp = document.createElement("canvas");
+  // Oversample generoso: almeno 16x la dimensione maggiore della cella
+  const OS = Math.max(16, Math.ceil(512 / Math.max(CELL_W, CELL_H)));
+
+  // Font size iniziale: occupa l'intera altezza della cella oversampled
+  // (il clamp successivo via bbox gestisce l'adattamento reale)
+  const initialFontPx = CELL_H * OS;
+
+  const TW = CELL_W  * OS * 2;  // canvas larga abbastanza per qualsiasi glifo
+  const TH = CELL_H  * OS * 2;
+
+  const tmp  = document.createElement("canvas");
   tmp.width  = TW;
   tmp.height = TH;
   const tctx = tmp.getContext("2d", { willReadFrequently: true });
   tctx.clearRect(0, 0, TW, TH);
-  tctx.fillStyle = "#fff";
+  tctx.fillStyle    = "#fff";
   tctx.textBaseline = "top";
   tctx.textAlign    = "left";
-  tctx.font = `${fontSize * TMP_SCALE}px "${currentFontFamily}", monospace`;
+  tctx.font = `${initialFontPx}px "${currentFontFamily}", monospace`;
   tctx.fillText(char, 0, 0);
 
+  // Misura ink bounding box
   const ld = tctx.getImageData(0, 0, TW, TH).data;
-  let lx0=TW, lx1=0, ly0=TH, ly1=0;
-  for (let y=0; y<TH; y++) {
-    for (let x=0; x<TW; x++) {
-      if (ld[(y*TW+x)*4+3] > 10) {
-        if(x<lx0)lx0=x; if(x>lx1)lx1=x;
-        if(y<ly0)ly0=y; if(y>ly1)ly1=y;
+  let lx0 = TW, lx1 = 0, ly0 = TH, ly1 = 0;
+  for (let y = 0; y < TH; y++) {
+    for (let x = 0; x < TW; x++) {
+      if (ld[(y * TW + x) * 4 + 3] > 10) {
+        if (x < lx0) lx0 = x;
+        if (x > lx1) lx1 = x;
+        if (y < ly0) ly0 = y;
+        if (y > ly1) ly1 = y;
       }
     }
   }
 
-  const src = document.createElement("canvas");
+  // Canvas finale alle dimensioni logiche della cella
+  const src  = document.createElement("canvas");
   src.width  = CELL_W;
   src.height = CELL_H;
   const sctx = src.getContext("2d", { willReadFrequently: true });
@@ -299,9 +305,10 @@ function glyphToBitmap(char, fontSize, threshold) {
   if (lx0 <= lx1 && ly0 <= ly1) {
     const inkW = lx1 - lx0 + 1;
     const inkH = ly1 - ly0 + 1;
-    const aspect = inkW / inkH;
+    // Adatta il bbox all'intera cella preservando l'aspect ratio
+    const aspect     = inkW / inkH;
     const cellAspect = CELL_W / CELL_H;
-    let dstW, dstH, dstX, dstY;
+    let dstW, dstH;
     if (aspect >= cellAspect) {
       dstW = CELL_W;
       dstH = Math.round(CELL_W / aspect);
@@ -309,16 +316,18 @@ function glyphToBitmap(char, fontSize, threshold) {
       dstH = CELL_H;
       dstW = Math.round(CELL_H * aspect);
     }
-    dstX = Math.floor((CELL_W - dstW) / 2);
-    dstY = Math.floor((CELL_H - dstH) / 2);
+    // Centra nella cella
+    const dstX = Math.floor((CELL_W - dstW) / 2);
+    const dstY = Math.floor((CELL_H - dstH) / 2);
     sctx.drawImage(tmp, lx0, ly0, inkW, inkH, dstX, dstY, dstW, dstH);
   }
 
+  // Binarizza
   const img  = sctx.getImageData(0, 0, CELL_W, CELL_H);
   const data = img.data;
-  for (let i=0; i<data.length; i+=4) {
-    const on = data[i+3] >= threshold ? 255 : 0;
-    data[i]=on; data[i+1]=on; data[i+2]=on; data[i+3]=255;
+  for (let i = 0; i < data.length; i += 4) {
+    const on = data[i + 3] >= threshold ? 255 : 0;
+    data[i] = on; data[i + 1] = on; data[i + 2] = on; data[i + 3] = 255;
   }
   sctx.putImageData(img, 0, 0);
   return src;
@@ -330,64 +339,64 @@ function buildGridSVG(W, H, scale, cellW, cellH) {
   svg.setAttribute("width",  W);
   svg.setAttribute("height", H);
   svg.setAttribute("class",  "grid-ov");
-  const mk = (x1,y1,x2,y2) => {
+  const mk = (x1, y1, x2, y2) => {
     const l = document.createElementNS(ns, "line");
-    l.setAttribute("x1",x1); l.setAttribute("y1",y1);
-    l.setAttribute("x2",x2); l.setAttribute("y2",y2);
+    l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+    l.setAttribute("x2", x2); l.setAttribute("y2", y2);
     l.setAttribute("stroke", "#2d2d2d");
     l.setAttribute("stroke-width", "1");
     svg.appendChild(l);
   };
-  for (let x=0; x<=cellW; x++) mk(x*scale, 0, x*scale, H);
-  for (let y=0; y<=cellH; y++) mk(0, y*scale, W, y*scale);
+  for (let x = 0; x <= cellW; x++) mk(x * scale, 0, x * scale, H);
+  for (let y = 0; y <= cellH; y++) mk(0, y * scale, W, y * scale);
   return svg;
 }
 
 function drawAll() {
-  const CELL_W = getCellW();
-  const CELL_H = getCellH();
+  const CELL_W   = getCellW();
+  const CELL_H   = getCellH();
+  const W        = CELL_W * SCALE;
+  const H        = CELL_H * SCALE;
+  const offsetX  = parseInt(offsetXInput.value,   10);
+  const offsetY  = parseInt(offsetYInput.value,   10);
+  const threshold= parseInt(thresholdInput.value, 10);
 
   glyphsEl.innerHTML = "";
-  const W = CELL_W * SCALE;
-  const H = CELL_H * SCALE;
-
-  const fontSize  = parseInt(fontSizeInput.value,  10);
-  const offsetX   = parseInt(offsetXInput.value,   10);
-  const offsetY   = parseInt(offsetYInput.value,   10);
-  const threshold = parseInt(thresholdInput.value, 10);
 
   const chars = currentMode === "single"
     ? [singleCharInput.value.trim()[0] || "A"]
     : [...alphabet];
 
   for (const ch of chars) {
-    const bitmap = glyphToBitmap(ch, fontSize, threshold);
+    // fontSize non è più un parametro: è calcolato internamente da glyphToBitmap
+    const bitmap = glyphToBitmap(ch, threshold);
 
     let finalSrc = bitmap;
     if (offsetX !== 0 || offsetY !== 0) {
-      const c2 = document.createElement("canvas");
-      c2.width=CELL_W; c2.height=CELL_H;
-      const c2ctx = c2.getContext("2d");
-      c2ctx.drawImage(bitmap, offsetX, offsetY);
+      const c2    = document.createElement("canvas");
+      c2.width    = CELL_W;
+      c2.height   = CELL_H;
+      c2.getContext("2d").drawImage(bitmap, offsetX, offsetY);
       finalSrc = c2;
     }
 
-    const out = document.createElement("canvas");
-    out.width=W; out.height=H;
+    const out  = document.createElement("canvas");
+    out.width  = W;
+    out.height = H;
     const octx = out.getContext("2d");
     octx.imageSmoothingEnabled = false;
     octx.drawImage(finalSrc, 0, 0, W, H);
     out.className = "glyph";
 
     const wrap = document.createElement("div");
-    wrap.className = "wrap";
-    wrap.style.width  = W+"px";
-    wrap.style.height = H+"px";
+    wrap.className  = "wrap";
+    wrap.style.width  = W + "px";
+    wrap.style.height = H + "px";
     wrap.appendChild(out);
     wrap.appendChild(buildGridSVG(W, H, SCALE, CELL_W, CELL_H));
 
     const lbl = document.createElement("div");
-    lbl.className = "lbl";
+    lbl.className   = "lbl";
     lbl.textContent = `'${ch}' — ${CELL_W}×${CELL_H}px`;
 
     const card = document.createElement("div");
@@ -400,24 +409,14 @@ function drawAll() {
   updateNote();
 }
 
-// render automatico quando si cambia il carattere
 singleCharInput.addEventListener("input", () => {
-  if (currentMode === "single" && singleCharInput.value.trim().length > 0) {
-    drawAll();
-  }
+  if (currentMode === "single" && singleCharInput.value.trim().length > 0) drawAll();
 });
-
-// render automatico on Enter
-singleCharInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") drawAll();
-});
+singleCharInput.addEventListener("keydown", (e) => { if (e.key === "Enter") drawAll(); });
 
 renderBtn.addEventListener("click", async () => {
   const file = fontFileInput.files[0];
-  if (file) {
-    await loadFontFromFile(file);
-    await document.fonts.ready;
-  }
+  if (file) { await loadFontFromFile(file); await document.fonts.ready; }
   drawAll();
 });
 
