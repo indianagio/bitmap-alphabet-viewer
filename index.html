@@ -195,18 +195,18 @@ const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 
 let currentMode = "single";
 
-const glyphsEl       = document.getElementById("glyphs");
-const fontFileInput  = document.getElementById("fontFile");
-const offsetXInput   = document.getElementById("offsetX");
-const offsetYInput   = document.getElementById("offsetY");
-const thresholdInput = document.getElementById("threshold");
-const scaleSlider    = document.getElementById("scaleSlider");
-const scaleVal       = document.getElementById("scaleVal");
-const noteEl         = document.getElementById("note");
-const renderBtn      = document.getElementById("renderBtn");
-const singleCharInput= document.getElementById("singleChar");
-const cellWInput     = document.getElementById("cellW");
-const cellHInput     = document.getElementById("cellH");
+const glyphsEl        = document.getElementById("glyphs");
+const fontFileInput   = document.getElementById("fontFile");
+const offsetXInput    = document.getElementById("offsetX");
+const offsetYInput    = document.getElementById("offsetY");
+const thresholdInput  = document.getElementById("threshold");
+const scaleSlider     = document.getElementById("scaleSlider");
+const scaleVal        = document.getElementById("scaleVal");
+const noteEl          = document.getElementById("note");
+const renderBtn       = document.getElementById("renderBtn");
+const singleCharInput = document.getElementById("singleChar");
+const cellWInput      = document.getElementById("cellW");
+const cellHInput      = document.getElementById("cellH");
 
 let SCALE = parseInt(scaleSlider.value, 10);
 
@@ -251,24 +251,18 @@ async function loadFontFromFile(file) {
 }
 
 /**
- * Esegue il render del glifo ad alta risoluzione, misura il bounding box
- * dell'inchiostro e lo ridimensiona per occupare l'intera cella (con aspect
- * ratio preservato). Il font size iniziale viene scalato proporzionalmente
- * alle dimensioni della cella, quindi il glifo viene fittato via bbox.
+ * Renderizza il glifo ad alta risoluzione, misura il bounding box dell'inchiostro
+ * e lo disegna STRETCHATO per occupare esattamente CELL_W x CELL_H pixel,
+ * senza alcun margine o spazio vuoto attorno.
  */
 function glyphToBitmap(char, threshold) {
   const CELL_W = getCellW();
   const CELL_H = getCellH();
 
-  // Oversample generoso: almeno 16x la dimensione maggiore della cella
-  const OS = Math.max(16, Math.ceil(512 / Math.max(CELL_W, CELL_H)));
-
-  // Font size iniziale: occupa l'intera altezza della cella oversampled
-  // (il clamp successivo via bbox gestisce l'adattamento reale)
-  const initialFontPx = CELL_H * OS;
-
-  const TW = CELL_W  * OS * 2;  // canvas larga abbastanza per qualsiasi glifo
-  const TH = CELL_H  * OS * 2;
+  // Oversample: canvas temporanea molto più grande per misurare il bbox con precisione
+  const OS = 32;
+  const TW = CELL_W * OS * 2;
+  const TH = CELL_H * OS * 2;
 
   const tmp  = document.createElement("canvas");
   tmp.width  = TW;
@@ -278,10 +272,11 @@ function glyphToBitmap(char, threshold) {
   tctx.fillStyle    = "#fff";
   tctx.textBaseline = "top";
   tctx.textAlign    = "left";
-  tctx.font = `${initialFontPx}px "${currentFontFamily}", monospace`;
+  // Font size proporzionale all'altezza oversampled
+  tctx.font = `${CELL_H * OS}px "${currentFontFamily}", monospace`;
   tctx.fillText(char, 0, 0);
 
-  // Misura ink bounding box
+  // Misura il bounding box esatto dell'inchiostro
   const ld = tctx.getImageData(0, 0, TW, TH).data;
   let lx0 = TW, lx1 = 0, ly0 = TH, ly1 = 0;
   for (let y = 0; y < TH; y++) {
@@ -295,7 +290,6 @@ function glyphToBitmap(char, threshold) {
     }
   }
 
-  // Canvas finale alle dimensioni logiche della cella
   const src  = document.createElement("canvas");
   src.width  = CELL_W;
   src.height = CELL_H;
@@ -305,21 +299,9 @@ function glyphToBitmap(char, threshold) {
   if (lx0 <= lx1 && ly0 <= ly1) {
     const inkW = lx1 - lx0 + 1;
     const inkH = ly1 - ly0 + 1;
-    // Adatta il bbox all'intera cella preservando l'aspect ratio
-    const aspect     = inkW / inkH;
-    const cellAspect = CELL_W / CELL_H;
-    let dstW, dstH;
-    if (aspect >= cellAspect) {
-      dstW = CELL_W;
-      dstH = Math.round(CELL_W / aspect);
-    } else {
-      dstH = CELL_H;
-      dstW = Math.round(CELL_H * aspect);
-    }
-    // Centra nella cella
-    const dstX = Math.floor((CELL_W - dstW) / 2);
-    const dstY = Math.floor((CELL_H - dstH) / 2);
-    sctx.drawImage(tmp, lx0, ly0, inkW, inkH, dstX, dstY, dstW, dstH);
+    // Stretch completo: il bbox viene mappato esattamente su tutta la cella
+    // nessun margine, nessuna preservazione dell'aspect ratio
+    sctx.drawImage(tmp, lx0, ly0, inkW, inkH, 0, 0, CELL_W, CELL_H);
   }
 
   // Binarizza
@@ -353,13 +335,13 @@ function buildGridSVG(W, H, scale, cellW, cellH) {
 }
 
 function drawAll() {
-  const CELL_W   = getCellW();
-  const CELL_H   = getCellH();
-  const W        = CELL_W * SCALE;
-  const H        = CELL_H * SCALE;
-  const offsetX  = parseInt(offsetXInput.value,   10);
-  const offsetY  = parseInt(offsetYInput.value,   10);
-  const threshold= parseInt(thresholdInput.value, 10);
+  const CELL_W    = getCellW();
+  const CELL_H    = getCellH();
+  const W         = CELL_W * SCALE;
+  const H         = CELL_H * SCALE;
+  const offsetX   = parseInt(offsetXInput.value,   10);
+  const offsetY   = parseInt(offsetYInput.value,   10);
+  const threshold = parseInt(thresholdInput.value, 10);
 
   glyphsEl.innerHTML = "";
 
@@ -368,14 +350,13 @@ function drawAll() {
     : [...alphabet];
 
   for (const ch of chars) {
-    // fontSize non è più un parametro: è calcolato internamente da glyphToBitmap
     const bitmap = glyphToBitmap(ch, threshold);
 
     let finalSrc = bitmap;
     if (offsetX !== 0 || offsetY !== 0) {
-      const c2    = document.createElement("canvas");
-      c2.width    = CELL_W;
-      c2.height   = CELL_H;
+      const c2  = document.createElement("canvas");
+      c2.width  = CELL_W;
+      c2.height = CELL_H;
       c2.getContext("2d").drawImage(bitmap, offsetX, offsetY);
       finalSrc = c2;
     }
@@ -389,7 +370,7 @@ function drawAll() {
     out.className = "glyph";
 
     const wrap = document.createElement("div");
-    wrap.className  = "wrap";
+    wrap.className    = "wrap";
     wrap.style.width  = W + "px";
     wrap.style.height = H + "px";
     wrap.appendChild(out);
