@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>12x16 Bitmap Alphabet Viewer</title>
+<title>Bitmap Alphabet Viewer</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -38,6 +38,23 @@
     background: #222;
     color: #fff;
   }
+  input[type="text"] {
+    width: 60px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 2px solid #3b82f6;
+    background: #222;
+    color: #fff;
+    font-size: 22px;
+    text-align: center;
+    font-weight: bold;
+    letter-spacing: 0.05em;
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.25);
+  }
   input[type="range"] {
     width: 140px;
     accent-color: #3b82f6;
@@ -51,6 +68,13 @@
     color: white;
     cursor: pointer;
     font-size: 14px;
+  }
+  button:hover { background: #2563eb; }
+  .separator {
+    width: 1px;
+    height: 32px;
+    background: #333;
+    margin: 0 4px;
   }
   .note {
     color: #aaa;
@@ -90,12 +114,58 @@
     top: 0; left: 0;
     pointer-events: none;
   }
+  .mode-tabs {
+    display: flex;
+    gap: 0;
+    background: #222;
+    border-radius: 8px;
+    padding: 3px;
+  }
+  .mode-tab {
+    padding: 5px 14px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .mode-tab.active {
+    background: #3b82f6;
+    color: #fff;
+  }
 </style>
 </head>
 <body>
-<h1>Bitmap Alphabet Viewer 12×16</h1>
+<h1>Bitmap Alphabet Viewer</h1>
 
 <div class="controls">
+  <!-- Modalità -->
+  <div class="mode-tabs">
+    <button class="mode-tab active" id="tabSingle" onclick="setMode('single')">Singolo</button>
+    <button class="mode-tab" id="tabAll" onclick="setMode('all')">Tutti</button>
+  </div>
+
+  <div class="separator"></div>
+
+  <!-- Carattere singolo -->
+  <label id="singleCharLabel">Carattere
+    <input type="text" id="singleChar" value="A" maxlength="1" title="Scrivi un carattere o cifra" />
+  </label>
+
+  <div class="separator"></div>
+
+  <!-- Dimensioni cella -->
+  <label>Cella W
+    <input type="number" id="cellW" value="12" min="4" max="64" />
+  </label>
+  <label>Cella H
+    <input type="number" id="cellH" value="16" min="4" max="64" />
+  </label>
+
+  <div class="separator"></div>
+
   <label>Font file
     <input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2" />
   </label>
@@ -105,11 +175,11 @@
   </label>
 
   <label>Offset X
-    <input type="number" id="offsetX" value="0" min="-6" max="6" />
+    <input type="number" id="offsetX" value="0" min="-16" max="16" />
   </label>
 
   <label>Offset Y
-    <input type="number" id="offsetY" value="0" min="-8" max="8" />
+    <input type="number" id="offsetY" value="0" min="-16" max="16" />
   </label>
 
   <label>Soglia alpha
@@ -128,28 +198,51 @@
 <div id="glyphs" class="glyphs"></div>
 
 <script>
-const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-const CELL_W = 12;
-const CELL_H = 16;
+const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-const glyphsEl      = document.getElementById("glyphs");
-const fontFileInput = document.getElementById("fontFile");
-const fontSizeInput = document.getElementById("fontSize");
-const offsetXInput  = document.getElementById("offsetX");
-const offsetYInput  = document.getElementById("offsetY");
-const thresholdInput= document.getElementById("threshold");
-const scaleSlider   = document.getElementById("scaleSlider");
-const scaleVal      = document.getElementById("scaleVal");
-const noteEl        = document.getElementById("note");
-const renderBtn     = document.getElementById("renderBtn");
+let currentMode = "single"; // "single" | "all"
+
+const glyphsEl       = document.getElementById("glyphs");
+const fontFileInput  = document.getElementById("fontFile");
+const fontSizeInput  = document.getElementById("fontSize");
+const offsetXInput   = document.getElementById("offsetX");
+const offsetYInput   = document.getElementById("offsetY");
+const thresholdInput = document.getElementById("threshold");
+const scaleSlider    = document.getElementById("scaleSlider");
+const scaleVal       = document.getElementById("scaleVal");
+const noteEl         = document.getElementById("note");
+const renderBtn      = document.getElementById("renderBtn");
+const singleCharInput= document.getElementById("singleChar");
+const cellWInput     = document.getElementById("cellW");
+const cellHInput     = document.getElementById("cellH");
 
 let SCALE = parseInt(scaleSlider.value, 10);
+
+function getCellW() { return Math.max(1, parseInt(cellWInput.value, 10) || 12); }
+function getCellH() { return Math.max(1, parseInt(cellHInput.value, 10) || 16); }
 
 scaleSlider.addEventListener("input", () => {
   SCALE = parseInt(scaleSlider.value, 10);
   scaleVal.textContent = SCALE;
-  noteEl.textContent = `Cella logica 12×16 px — scala ${SCALE}x — griglia pixel visibile.`;
+  updateNote();
 });
+
+function updateNote() {
+  const cw = getCellW();
+  const ch = getCellH();
+  noteEl.textContent = `Cella logica ${cw}×${ch} px — scala ${SCALE}x — griglia pixel visibile.`;
+}
+
+cellWInput.addEventListener("input", updateNote);
+cellHInput.addEventListener("input", updateNote);
+
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById("tabSingle").classList.toggle("active", mode === "single");
+  document.getElementById("tabAll").classList.toggle("active", mode === "all");
+  document.getElementById("singleCharLabel").style.opacity = mode === "single" ? "1" : "0.4";
+  document.getElementById("singleCharLabel").style.pointerEvents = mode === "single" ? "" : "none";
+}
 
 let currentFontFamily = "monospace";
 let currentFontFace   = null;
@@ -168,9 +261,10 @@ async function loadFontFromFile(file) {
   currentFontFamily = fontName;
 }
 
-/* Render glyph at high res, measure ink bbox, return ImageData CELL_W x CELL_H */
 function glyphToBitmap(char, fontSize, threshold) {
-  const TMP_SCALE = 16; // oversample factor
+  const CELL_W = getCellW();
+  const CELL_H = getCellH();
+  const TMP_SCALE = 16;
   const TW = CELL_W * TMP_SCALE + 20;
   const TH = CELL_H * TMP_SCALE + 20;
 
@@ -185,7 +279,6 @@ function glyphToBitmap(char, fontSize, threshold) {
   tctx.font = `${fontSize * TMP_SCALE}px "${currentFontFamily}", monospace`;
   tctx.fillText(char, 0, 0);
 
-  // measure ink bbox
   const ld = tctx.getImageData(0, 0, TW, TH).data;
   let lx0=TW, lx1=0, ly0=TH, ly1=0;
   for (let y=0; y<TH; y++) {
@@ -206,28 +299,21 @@ function glyphToBitmap(char, fontSize, threshold) {
   if (lx0 <= lx1 && ly0 <= ly1) {
     const inkW = lx1 - lx0 + 1;
     const inkH = ly1 - ly0 + 1;
-
-    // Preserve aspect ratio, center in cell with padding
     const aspect = inkW / inkH;
     const cellAspect = CELL_W / CELL_H;
-
     let dstW, dstH, dstX, dstY;
     if (aspect >= cellAspect) {
-      // wider glyph: fit width
       dstW = CELL_W;
       dstH = Math.round(CELL_W / aspect);
     } else {
-      // taller glyph: fit height
       dstH = CELL_H;
       dstW = Math.round(CELL_H * aspect);
     }
     dstX = Math.floor((CELL_W - dstW) / 2);
     dstY = Math.floor((CELL_H - dstH) / 2);
-
     sctx.drawImage(tmp, lx0, ly0, inkW, inkH, dstX, dstY, dstW, dstH);
   }
 
-  // binarise
   const img  = sctx.getImageData(0, 0, CELL_W, CELL_H);
   const data = img.data;
   for (let i=0; i<data.length; i+=4) {
@@ -238,7 +324,7 @@ function glyphToBitmap(char, fontSize, threshold) {
   return src;
 }
 
-function buildGridSVG(W, H, scale) {
+function buildGridSVG(W, H, scale, cellW, cellH) {
   const ns  = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("width",  W);
@@ -252,12 +338,15 @@ function buildGridSVG(W, H, scale) {
     l.setAttribute("stroke-width", "1");
     svg.appendChild(l);
   };
-  for (let x=0; x<=CELL_W; x++) mk(x*scale, 0, x*scale, H);
-  for (let y=0; y<=CELL_H; y++) mk(0, y*scale, W, y*scale);
+  for (let x=0; x<=cellW; x++) mk(x*scale, 0, x*scale, H);
+  for (let y=0; y<=cellH; y++) mk(0, y*scale, W, y*scale);
   return svg;
 }
 
 function drawAll() {
+  const CELL_W = getCellW();
+  const CELL_H = getCellH();
+
   glyphsEl.innerHTML = "";
   const W = CELL_W * SCALE;
   const H = CELL_H * SCALE;
@@ -267,10 +356,13 @@ function drawAll() {
   const offsetY   = parseInt(offsetYInput.value,   10);
   const threshold = parseInt(thresholdInput.value, 10);
 
-  for (const ch of alphabet) {
+  const chars = currentMode === "single"
+    ? [singleCharInput.value.trim()[0] || "A"]
+    : [...alphabet];
+
+  for (const ch of chars) {
     const bitmap = glyphToBitmap(ch, fontSize, threshold);
 
-    // apply manual offset on a copy
     let finalSrc = bitmap;
     if (offsetX !== 0 || offsetY !== 0) {
       const c2 = document.createElement("canvas");
@@ -280,7 +372,6 @@ function drawAll() {
       finalSrc = c2;
     }
 
-    // scale up
     const out = document.createElement("canvas");
     out.width=W; out.height=H;
     const octx = out.getContext("2d");
@@ -293,11 +384,11 @@ function drawAll() {
     wrap.style.width  = W+"px";
     wrap.style.height = H+"px";
     wrap.appendChild(out);
-    wrap.appendChild(buildGridSVG(W, H, SCALE));
+    wrap.appendChild(buildGridSVG(W, H, SCALE, CELL_W, CELL_H));
 
     const lbl = document.createElement("div");
     lbl.className = "lbl";
-    lbl.textContent = `'${ch}'`;
+    lbl.textContent = `'${ch}' — ${CELL_W}×${CELL_H}px`;
 
     const card = document.createElement("div");
     card.className = "card";
@@ -305,7 +396,21 @@ function drawAll() {
     card.appendChild(wrap);
     glyphsEl.appendChild(card);
   }
+
+  updateNote();
 }
+
+// render automatico quando si cambia il carattere
+singleCharInput.addEventListener("input", () => {
+  if (currentMode === "single" && singleCharInput.value.trim().length > 0) {
+    drawAll();
+  }
+});
+
+// render automatico on Enter
+singleCharInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") drawAll();
+});
 
 renderBtn.addEventListener("click", async () => {
   const file = fontFileInput.files[0];
