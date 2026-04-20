@@ -8,15 +8,13 @@
   :root{
     --cell-w: 12;
     --cell-h: 16;
-    --scale: 10;
-    --gap: 14px;
+    --scale: 50;
+    --gap: 20px;
     --bg: #111;
     --panel: #1b1b1b;
     --text: #eee;
     --muted: #aaa;
-    --grid: #2c2c2c;
     --pixel-bg: #000;
-    --pixel-fg: #fff;
   }
 
   * { box-sizing: border-box; }
@@ -28,10 +26,7 @@
     font-family: system-ui, sans-serif;
   }
 
-  h1 {
-    margin: 0 0 12px;
-    font-size: 20px;
-  }
+  h1 { margin: 0 0 12px; font-size: 20px; }
 
   .controls {
     display: flex;
@@ -60,9 +55,7 @@
     color: #fff;
   }
 
-  input[type="file"] {
-    color: #ddd;
-  }
+  input[type="file"] { color: #ddd; }
 
   button {
     padding: 8px 12px;
@@ -79,9 +72,9 @@
     margin-bottom: 14px;
   }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  .glyphs {
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--gap);
   }
 
@@ -89,6 +82,9 @@
     background: var(--panel);
     border-radius: 12px;
     padding: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
 
   .label {
@@ -98,23 +94,30 @@
     text-align: center;
   }
 
-  canvas {
+  .canvas-wrap {
+    position: relative;
     display: block;
-    width: calc(var(--cell-w) * var(--scale) * 1px);
-    height: calc(var(--cell-h) * var(--scale) * 1px);
+    /* exact pixel size set by JS */
+  }
+
+  canvas.glyph {
+    display: block;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    background:
-      linear-gradient(to right, var(--grid) 1px, transparent 1px) 0 0 / calc(var(--scale) * 1px) calc(var(--scale) * 1px),
-      linear-gradient(to bottom, var(--grid) 1px, transparent 1px) 0 0 / calc(var(--scale) * 1px) calc(var(--scale) * 1px),
-      var(--pixel-bg);
-    border: 1px solid #444;
-    margin: 0 auto;
+    border: 1px solid #555;
+  }
+
+  /* SVG grid overlay sits on top */
+  svg.grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
   }
 </style>
 </head>
 <body>
-  <h1>Bitmap Alphabet Viewer 12x16</h1>
+  <h1>Bitmap Alphabet Viewer 12×16</h1>
 
   <div class="controls">
     <label>Font file
@@ -122,7 +125,7 @@
     </label>
 
     <label>Font size
-      <input type="number" id="fontSize" value="14" min="6" max="32" />
+      <input type="number" id="fontSize" value="15" min="6" max="32" />
     </label>
 
     <label>Offset X
@@ -130,7 +133,7 @@
     </label>
 
     <label>Offset Y
-      <input type="number" id="offsetY" value="0" min="-6" max="6" />
+      <input type="number" id="offsetY" value="0" min="-8" max="8" />
     </label>
 
     <label>Soglia alpha
@@ -141,91 +144,191 @@
   </div>
 
   <div class="note">
-    Celle logiche 12x16 pixel, visualizzazione 10x, alfabeto completo maiuscole + minuscole.
+    Cella logica 12×16 px — visualizzazione 50x con griglia pixel visibile.
   </div>
 
-  <div id="grid" class="grid"></div>
+  <div id="glyphs" class="glyphs"></div>
 
 <script>
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const CELL_W = 12;
 const CELL_H = 16;
-const SCALE = 10;
+const SCALE  = 50;
 
-const grid = document.getElementById("grid");
+const W = CELL_W * SCALE; // 600px
+const H = CELL_H * SCALE; // 800px
+
+const glyphsEl     = document.getElementById("glyphs");
 const fontFileInput = document.getElementById("fontFile");
 const fontSizeInput = document.getElementById("fontSize");
-const offsetXInput = document.getElementById("offsetX");
-const offsetYInput = document.getElementById("offsetY");
-const thresholdInput = document.getElementById("threshold");
-const renderBtn = document.getElementById("renderBtn");
+const offsetXInput  = document.getElementById("offsetX");
+const offsetYInput  = document.getElementById("offsetY");
+const thresholdInput= document.getElementById("threshold");
+const renderBtn     = document.getElementById("renderBtn");
 
 let currentFontFamily = "monospace";
-let currentFontFace = null;
+let currentFontFace   = null;
 
 async function loadFontFromFile(file) {
   if (!file) return;
   const fontName = "UserBitmapFont_" + Date.now();
   const url = URL.createObjectURL(file);
-
   if (currentFontFace) {
     try { document.fonts.delete(currentFontFace); } catch(e) {}
   }
-
-  const fontFace = new FontFace(fontName, `url(${url})`);
-  await fontFace.load();
-  document.fonts.add(fontFace);
-
-  currentFontFace = fontFace;
+  const ff = new FontFace(fontName, `url(${url})`);
+  await ff.load();
+  document.fonts.add(ff);
+  currentFontFace   = ff;
   currentFontFamily = fontName;
 }
 
+/* Build a 1×1 canvas to measure actual ink bounding box */
+function measureGlyph(char, fontSize) {
+  const c = document.createElement("canvas");
+  c.width  = CELL_W * 4;  // generous temp size
+  c.height = CELL_H * 4;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = "#fff";
+  ctx.textBaseline = "top";
+  ctx.textAlign    = "left";
+  ctx.font = `${fontSize}px "${currentFontFamily}", monospace`;
+  ctx.fillText(char, 0, 0);
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  let minX = c.width, maxX = 0, minY = c.height, maxY = 0;
+  for (let y = 0; y < c.height; y++) {
+    for (let x = 0; x < c.width; x++) {
+      const a = d[(y * c.width + x) * 4 + 3];
+      if (a > 10) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (minX > maxX) return { w: 0, h: 0, ox: 0, oy: 0 };
+  return { w: maxX - minX + 1, h: maxY - minY + 1, ox: minX, oy: minY };
+}
+
 function renderGlyph(char, fontSize, offsetX, offsetY, threshold) {
+  // --- step 1: measure actual ink bounding box ---
+  const m = measureGlyph(char, fontSize);
+
+  // --- step 2: render into CELL_W×CELL_H, scaled to fill the cell ---
   const src = document.createElement("canvas");
-  src.width = CELL_W;
+  src.width  = CELL_W;
   src.height = CELL_H;
   const sctx = src.getContext("2d", { willReadFrequently: true });
-
   sctx.clearRect(0, 0, CELL_W, CELL_H);
-  sctx.fillStyle = "#fff";
-  sctx.textBaseline = "middle";
-  sctx.textAlign = "center";
-  sctx.font = `${fontSize}px "${currentFontFamily}", monospace`;
 
-  const x = Math.floor(CELL_W / 2) + offsetX;
-  const y = Math.floor(CELL_H / 2) + offsetY;
-  sctx.fillText(char, x, y);
+  if (m.w > 0 && m.h > 0) {
+    // draw at large size first
+    const tmpSize = fontSize * 8;
+    const tmp = document.createElement("canvas");
+    tmp.width  = CELL_W * 8 + 20;
+    tmp.height = CELL_H * 8 + 20;
+    const tctx = tmp.getContext("2d", { willReadFrequently: true });
+    tctx.clearRect(0, 0, tmp.width, tmp.height);
+    tctx.fillStyle = "#fff";
+    tctx.textBaseline = "top";
+    tctx.textAlign    = "left";
+    tctx.font = `${tmpSize}px "${currentFontFamily}", monospace`;
+    tctx.fillText(char, 0, 0);
 
+    // measure at large size
+    const ld = tctx.getImageData(0, 0, tmp.width, tmp.height).data;
+    let lx0=tmp.width, lx1=0, ly0=tmp.height, ly1=0;
+    for (let y=0;y<tmp.height;y++) {
+      for (let x=0;x<tmp.width;x++) {
+        const a=ld[(y*tmp.width+x)*4+3];
+        if (a>10){
+          if(x<lx0)lx0=x; if(x>lx1)lx1=x;
+          if(y<ly0)ly0=y; if(y>ly1)ly1=y;
+        }
+      }
+    }
+
+    if (lx0 <= lx1 && ly0 <= ly1) {
+      const inkW = lx1 - lx0 + 1;
+      const inkH = ly1 - ly0 + 1;
+      // scale ink to fill CELL_W x CELL_H exactly
+      sctx.save();
+      sctx.scale(CELL_W / inkW, CELL_H / inkH);
+      sctx.drawImage(tmp, lx0, ly0, inkW, inkH, 0, 0, inkW, inkH);
+      sctx.restore();
+    }
+  }
+
+  // apply offset
+  if (offsetX !== 0 || offsetY !== 0) {
+    const snap = document.createElement("canvas");
+    snap.width = CELL_W; snap.height = CELL_H;
+    const snctx = snap.getContext("2d");
+    snctx.drawImage(src, 0, 0);
+    sctx.clearRect(0, 0, CELL_W, CELL_H);
+    sctx.drawImage(snap, offsetX, offsetY);
+  }
+
+  // threshold binarise
   const img = sctx.getImageData(0, 0, CELL_W, CELL_H);
   const data = img.data;
-
   for (let i = 0; i < data.length; i += 4) {
-    const a = data[i + 3];
-    const on = a >= threshold ? 255 : 0;
-    data[i] = on;
-    data[i + 1] = on;
-    data[i + 2] = on;
-    data[i + 3] = 255;
+    const on = data[i+3] >= threshold ? 255 : 0;
+    data[i]=on; data[i+1]=on; data[i+2]=on; data[i+3]=255;
   }
   sctx.putImageData(img, 0, 0);
 
+  // --- step 3: scale up to SCALE ---
   const out = document.createElement("canvas");
-  out.width = CELL_W * SCALE;
-  out.height = CELL_H * SCALE;
+  out.width  = W;
+  out.height = H;
   const octx = out.getContext("2d");
   octx.imageSmoothingEnabled = false;
-  octx.clearRect(0, 0, out.width, out.height);
-  octx.drawImage(src, 0, 0, out.width, out.height);
+  octx.drawImage(src, 0, 0, W, H);
 
   return out;
 }
 
-function drawAll() {
-  grid.innerHTML = "";
+function buildGridSVG() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width",  W);
+  svg.setAttribute("height", H);
+  svg.setAttribute("class",  "grid-overlay");
 
-  const fontSize = parseInt(fontSizeInput.value, 10);
-  const offsetX = parseInt(offsetXInput.value, 10);
-  const offsetY = parseInt(offsetYInput.value, 10);
+  // vertical lines
+  for (let x = 0; x <= CELL_W; x++) {
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("x1", x * SCALE);
+    line.setAttribute("y1", 0);
+    line.setAttribute("x2", x * SCALE);
+    line.setAttribute("y2", H);
+    line.setAttribute("stroke", "#333");
+    line.setAttribute("stroke-width", "1");
+    svg.appendChild(line);
+  }
+  // horizontal lines
+  for (let y = 0; y <= CELL_H; y++) {
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("x1", 0);
+    line.setAttribute("y1", y * SCALE);
+    line.setAttribute("x2", W);
+    line.setAttribute("y2", y * SCALE);
+    line.setAttribute("stroke", "#333");
+    line.setAttribute("stroke-width", "1");
+    svg.appendChild(line);
+  }
+  return svg;
+}
+
+function drawAll() {
+  glyphsEl.innerHTML = "";
+
+  const fontSize  = parseInt(fontSizeInput.value, 10);
+  const offsetX   = parseInt(offsetXInput.value,  10);
+  const offsetY   = parseInt(offsetYInput.value,  10);
   const threshold = parseInt(thresholdInput.value, 10);
 
   for (const ch of alphabet) {
@@ -237,10 +340,18 @@ function drawAll() {
     label.textContent = ch;
 
     const canvas = renderGlyph(ch, fontSize, offsetX, offsetY, threshold);
+    canvas.className = "glyph";
+
+    const wrap = document.createElement("div");
+    wrap.className = "canvas-wrap";
+    wrap.style.width  = W + "px";
+    wrap.style.height = H + "px";
+    wrap.appendChild(canvas);
+    wrap.appendChild(buildGridSVG());
 
     card.appendChild(label);
-    card.appendChild(canvas);
-    grid.appendChild(card);
+    card.appendChild(wrap);
+    glyphsEl.appendChild(card);
   }
 }
 
