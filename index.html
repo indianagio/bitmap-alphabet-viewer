@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>12x16 Bitmap Alphabet Viewer</title>
+<style>
+  :root{
+    --cell-w: 12;
+    --cell-h: 16;
+    --scale: 10;
+    --gap: 14px;
+    --bg: #111;
+    --panel: #1b1b1b;
+    --text: #eee;
+    --muted: #aaa;
+    --grid: #2c2c2c;
+    --pixel-bg: #000;
+    --pixel-fg: #fff;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, sans-serif;
+  }
+
+  h1 {
+    margin: 0 0 12px;
+    font-size: 20px;
+  }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    background: var(--panel);
+    padding: 14px;
+    border-radius: 12px;
+    margin-bottom: 18px;
+  }
+
+  .controls label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  input[type="number"] {
+    width: 80px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid #444;
+    background: #222;
+    color: #fff;
+  }
+
+  input[type="file"] {
+    color: #ddd;
+  }
+
+  button {
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: #3b82f6;
+    color: white;
+    cursor: pointer;
+  }
+
+  .note {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: var(--gap);
+  }
+
+  .card {
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 10px;
+  }
+
+  .label {
+    font-size: 14px;
+    margin-bottom: 8px;
+    color: #ddd;
+    text-align: center;
+  }
+
+  canvas {
+    display: block;
+    width: calc(var(--cell-w) * var(--scale) * 1px);
+    height: calc(var(--cell-h) * var(--scale) * 1px);
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background:
+      linear-gradient(to right, var(--grid) 1px, transparent 1px) 0 0 / calc(var(--scale) * 1px) calc(var(--scale) * 1px),
+      linear-gradient(to bottom, var(--grid) 1px, transparent 1px) 0 0 / calc(var(--scale) * 1px) calc(var(--scale) * 1px),
+      var(--pixel-bg);
+    border: 1px solid #444;
+    margin: 0 auto;
+  }
+</style>
+</head>
+<body>
+  <h1>Bitmap Alphabet Viewer 12x16</h1>
+
+  <div class="controls">
+    <label>Font file
+      <input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2" />
+    </label>
+
+    <label>Font size
+      <input type="number" id="fontSize" value="14" min="6" max="32" />
+    </label>
+
+    <label>Offset X
+      <input type="number" id="offsetX" value="0" min="-6" max="6" />
+    </label>
+
+    <label>Offset Y
+      <input type="number" id="offsetY" value="0" min="-6" max="6" />
+    </label>
+
+    <label>Soglia alpha
+      <input type="number" id="threshold" value="80" min="0" max="255" />
+    </label>
+
+    <button id="renderBtn">Render</button>
+  </div>
+
+  <div class="note">
+    Celle logiche 12x16 pixel, visualizzazione 10x, alfabeto completo maiuscole + minuscole.
+  </div>
+
+  <div id="grid" class="grid"></div>
+
+<script>
+const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+const CELL_W = 12;
+const CELL_H = 16;
+const SCALE = 10;
+
+const grid = document.getElementById("grid");
+const fontFileInput = document.getElementById("fontFile");
+const fontSizeInput = document.getElementById("fontSize");
+const offsetXInput = document.getElementById("offsetX");
+const offsetYInput = document.getElementById("offsetY");
+const thresholdInput = document.getElementById("threshold");
+const renderBtn = document.getElementById("renderBtn");
+
+let currentFontFamily = "monospace";
+let currentFontFace = null;
+
+async function loadFontFromFile(file) {
+  if (!file) return;
+  const fontName = "UserBitmapFont_" + Date.now();
+  const url = URL.createObjectURL(file);
+
+  if (currentFontFace) {
+    try { document.fonts.delete(currentFontFace); } catch(e) {}
+  }
+
+  const fontFace = new FontFace(fontName, `url(${url})`);
+  await fontFace.load();
+  document.fonts.add(fontFace);
+
+  currentFontFace = fontFace;
+  currentFontFamily = fontName;
+}
+
+function renderGlyph(char, fontSize, offsetX, offsetY, threshold) {
+  const src = document.createElement("canvas");
+  src.width = CELL_W;
+  src.height = CELL_H;
+  const sctx = src.getContext("2d", { willReadFrequently: true });
+
+  sctx.clearRect(0, 0, CELL_W, CELL_H);
+  sctx.fillStyle = "#fff";
+  sctx.textBaseline = "middle";
+  sctx.textAlign = "center";
+  sctx.font = `${fontSize}px "${currentFontFamily}", monospace`;
+
+  const x = Math.floor(CELL_W / 2) + offsetX;
+  const y = Math.floor(CELL_H / 2) + offsetY;
+  sctx.fillText(char, x, y);
+
+  const img = sctx.getImageData(0, 0, CELL_W, CELL_H);
+  const data = img.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    const on = a >= threshold ? 255 : 0;
+    data[i] = on;
+    data[i + 1] = on;
+    data[i + 2] = on;
+    data[i + 3] = 255;
+  }
+  sctx.putImageData(img, 0, 0);
+
+  const out = document.createElement("canvas");
+  out.width = CELL_W * SCALE;
+  out.height = CELL_H * SCALE;
+  const octx = out.getContext("2d");
+  octx.imageSmoothingEnabled = false;
+  octx.clearRect(0, 0, out.width, out.height);
+  octx.drawImage(src, 0, 0, out.width, out.height);
+
+  return out;
+}
+
+function drawAll() {
+  grid.innerHTML = "";
+
+  const fontSize = parseInt(fontSizeInput.value, 10);
+  const offsetX = parseInt(offsetXInput.value, 10);
+  const offsetY = parseInt(offsetYInput.value, 10);
+  const threshold = parseInt(thresholdInput.value, 10);
+
+  for (const ch of alphabet) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = ch;
+
+    const canvas = renderGlyph(ch, fontSize, offsetX, offsetY, threshold);
+
+    card.appendChild(label);
+    card.appendChild(canvas);
+    grid.appendChild(card);
+  }
+}
+
+renderBtn.addEventListener("click", async () => {
+  const file = fontFileInput.files[0];
+  if (file) {
+    await loadFontFromFile(file);
+    await document.fonts.ready;
+  }
+  drawAll();
+});
+
+drawAll();
+</script>
+</body>
+</html>
